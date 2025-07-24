@@ -1,0 +1,14 @@
+jax>=0.4.0
+jaxlib>=0.4.0
+dm-haiku>=0.0.10
+optax>=0.1.5
+chex>=0.1.7
+orbax-checkpoint>=0.4.0
+grain-nightly>=0.2.0
+numpy>=1.24.0
+pydantic>=2.0.0
+click>=8.0.0
+rich>=13.0.0
+loguru>=0.7.0
+pyyaml>=6.0
+chess>=1.10.0

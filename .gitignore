@@ -1,6 +1,48 @@
-.venv
-.jsonl
-.pgn
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Data files
+*.jsonl
+*.pgn
+*.npz
+*.bag
+data/
+checkpoints/
+
+# Large model files
+*.bin
+*.safetensors
+*.pth
+*.pt
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# MyPy
+.mypy_cache/
+
+# Output directories
+outputs/
+logs/
+wandb/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

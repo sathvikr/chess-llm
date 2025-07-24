@@ -1,0 +1,42 @@
+project_name: "chess-transformer"
+experiment_name: "default"
+output_dir: "outputs"
+checkpoint_dir: "checkpoints"
+log_level: "INFO"
+
+data:
+  input_path: "data/train.npz"
+  output_dir: "data"
+  batch_size: 32
+  shuffle: true
+  train_ratio: 0.9
+  num_workers: 4
+  seed: 42
+
+model:
+  size: "small"
+  vocab_size: 32
+  embedding_dim: 256
+  num_heads: 8
+  num_layers: 8
+  max_sequence_length: 79
+  dropout_rate: 0.1
+  use_causal_mask: true
+
+training:
+  policy: "state_value"
+  learning_rate: 0.0001
+  num_steps: 10000
+  warmup_steps: 1000
+  batch_size: 32
+  gradient_clip_norm: 1.0
+  weight_decay: 0.01
+  save_frequency: 1000
+  log_frequency: 100
+  eval_frequency: 1000
+  num_return_buckets: 128
+
+evaluation:
+  batch_size: 64
+  num_samples: null
+  metrics: ["accuracy", "loss"]
