@@ -3,6 +3,9 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Tuple, Union, Any
 from loguru import logger
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import cpu_count
+import os
 
 from chess_llm.core.constants import (
     CHARACTERS_INDEX, 
@@ -137,39 +140,52 @@ class DataProcessor:
         self, 
         input_path: Union[str, Path], 
         output_dir: Union[str, Path],
-        num_buckets: int = 128
+        num_buckets: int = 128,
+        num_workers: int = None
     ) -> Dict[str, int]:
+        if num_workers is None:
+            num_workers = min(16, cpu_count())
+        
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
         train_path = output_dir / "train.npz"
         test_path = output_dir / "test.npz"
 
+        # Read all lines first
+        logger.info(f"Reading input file: {input_path}")
+        with open(input_path, 'r') as f:
+            lines = [line.strip() for line in f if line.strip()]
+        
+        logger.info(f"Processing {len(lines):,} lines with {num_workers} workers")
+        
+        # Split lines into chunks for parallel processing
+        chunk_size = max(1000, len(lines) // (num_workers * 4))
+        chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
+        
         train_tokens, train_values = [], []
         test_tokens, test_values = [], []
-
-        with open(input_path, 'r') as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                
+        
+        # Process chunks in parallel
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            futures = {
+                executor.submit(self._process_chunk, chunk, num_buckets, i): i 
+                for i, chunk in enumerate(chunks)
+            }
+            
+            for future in as_completed(futures):
+                chunk_idx = futures[future]
                 try:
-                    data = json.loads(line)
-                    processed = self._process_evaluation_line(data, 0)
-                    if processed:
-                        tokens = self.tokenize_fen(processed['fen'])
-                        bucket = self.convert_to_buckets(processed['value'], num_buckets)
-                        
-                        if np.random.rand() < self.train_ratio:
-                            train_tokens.append(tokens)
-                            train_values.append(bucket)
-                        else:
-                            test_tokens.append(tokens)
-                            test_values.append(bucket)
-                except (json.JSONDecodeError, DataError) as e:
-                    logger.warning(f"Skipping line due to error: {e}")
-                    continue
+                    chunk_train_tokens, chunk_train_values, chunk_test_tokens, chunk_test_values = future.result()
+                    train_tokens.extend(chunk_train_tokens)
+                    train_values.extend(chunk_train_values)
+                    test_tokens.extend(chunk_test_tokens)
+                    test_values.extend(chunk_test_values)
+                    logger.info(f"Completed chunk {chunk_idx + 1}/{len(chunks)}")
+                except Exception as e:
+                    logger.error(f"Error processing chunk {chunk_idx}: {e}")
 
+        logger.info(f"Processed {len(train_tokens) + len(test_tokens):,} total samples")
         self._save_numpy_data_from_lists(train_tokens, train_values, train_path)
         self._save_numpy_data_from_lists(test_tokens, test_values, test_path)
 
@@ -178,6 +194,33 @@ class DataProcessor:
             "train": len(train_tokens),
             "test": len(test_tokens)
         }
+
+    def _process_chunk(self, lines: List[str], num_buckets: int, chunk_idx: int) -> Tuple[List[np.ndarray], List[int], List[np.ndarray], List[int]]:
+        """Process a chunk of lines in parallel."""
+        # Set random seed per chunk to ensure reproducible splits
+        np.random.seed(self.seed + chunk_idx)
+        
+        train_tokens, train_values = [], []
+        test_tokens, test_values = [], []
+        
+        for line in lines:
+            try:
+                data = json.loads(line)
+                processed = self._process_evaluation_line(data, 0)
+                if processed:
+                    tokens = self.tokenize_fen(processed['fen'])
+                    bucket = self.convert_to_buckets(processed['value'], num_buckets)
+                    
+                    if np.random.rand() < self.train_ratio:
+                        train_tokens.append(tokens)
+                        train_values.append(bucket)
+                    else:
+                        test_tokens.append(tokens)
+                        test_values.append(bucket)
+            except (json.JSONDecodeError, DataError):
+                continue
+        
+        return train_tokens, train_values, test_tokens, test_values
 
     def _save_numpy_data_from_lists(self, tokens: List[np.ndarray], values: List[int], path: Path) -> None:
         if not tokens:

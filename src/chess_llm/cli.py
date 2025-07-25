@@ -37,18 +37,20 @@ def cli(log_level: str) -> None:
 @click.option("--train-ratio", default=0.9, type=float, help="Training data ratio")
 @click.option("--num-buckets", default=128, type=int, help="Number of value buckets")
 @click.option("--seed", default=42, type=int, help="Random seed")
+@click.option("--num-workers", default=None, type=int, help="Number of parallel workers (default: min(16, CPU count))")
 def prepare_data(
     input_path: Path,
     output_dir: Path,
     train_ratio: float,
     num_buckets: int,
-    seed: int
+    seed: int,
+    num_workers: Optional[int]
 ) -> None:
     try:
         console.print(f"[bold blue]Preparing data from {input_path}[/bold blue]")
         
         processor = DataProcessor(train_ratio=train_ratio, seed=seed)
-        stats = processor.process_file(input_path, output_dir, num_buckets)
+        stats = processor.process_file(input_path, output_dir, num_buckets, num_workers)
         
         table = Table(title="Data Processing Results")
         table.add_column("Metric", style="cyan")
@@ -125,12 +127,15 @@ def train(
             train_ratio=config.data.train_ratio,
             num_buckets=config.training.num_return_buckets,
             seed=config.data.seed,
+            num_workers=config.data.num_workers,
         )
         
         train_loader = DataLoader(
             data_path=Path(config.data.output_dir) / "train.npz",
             batch_size=config.training.batch_size,
-            shuffle=True
+            shuffle=True,
+            prefetch_batches=4,
+            num_workers=min(4, config.data.num_workers)
         )
         
         eval_loader = None
@@ -138,7 +143,9 @@ def train(
             eval_loader = DataLoader(
                 data_path=Path(config.data.output_dir) / "test.npz",
                 batch_size=config.evaluation.batch_size,
-                shuffle=False
+                shuffle=False,
+                prefetch_batches=2,
+                num_workers=2
             )
         
         trainer = Trainer(config)

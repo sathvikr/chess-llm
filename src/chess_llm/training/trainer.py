@@ -11,6 +11,7 @@ from loguru import logger
 from chess_llm.core.config import Config
 from chess_llm.core.exceptions import CheckpointError, TrainingError
 from chess_llm.data.loader import DataLoader
+from typing import List
 from chess_llm.models.transformer import create_model, initialize_model, model_summary
 
 
@@ -88,6 +89,47 @@ class Trainer:
         accuracy = jnp.mean(jnp.argmax(logits, axis=-1) == targets)
         
         return new_params, new_opt_state, loss, accuracy
+    
+    def _accumulate_gradients(
+        self,
+        params: Dict[str, Any],
+        rng_key: jax.random.PRNGKey,
+        batch_tokens_list: List[jnp.ndarray],
+        batch_targets_list: List[jnp.ndarray]
+    ) -> Tuple[Dict[str, Any], float, float]:
+        """Accumulate gradients over multiple micro-batches."""
+        total_grads = None
+        total_loss = 0.0
+        total_accuracy = 0.0
+        
+        for i, (tokens, targets) in enumerate(zip(batch_tokens_list, batch_targets_list)):
+            dropout_key, rng_key = jax.random.split(rng_key)
+            
+            def loss_fn(p):
+                return self._loss_fn(p, dropout_key, tokens, targets)
+            
+            loss, grads = jax.value_and_grad(loss_fn)(params)
+            
+            # Accumulate gradients
+            if total_grads is None:
+                total_grads = grads
+            else:
+                total_grads = jax.tree_map(lambda x, y: x + y, total_grads, grads)
+            
+            # Compute accuracy for logging
+            logits = self.model.apply(params, None, tokens, is_training=False)
+            accuracy = jnp.mean(jnp.argmax(logits, axis=-1) == targets)
+            
+            total_loss += loss
+            total_accuracy += accuracy
+        
+        # Average gradients and metrics
+        num_batches = len(batch_tokens_list)
+        total_grads = jax.tree_map(lambda x: x / num_batches, total_grads)
+        avg_loss = total_loss / num_batches
+        avg_accuracy = total_accuracy / num_batches
+        
+        return total_grads, avg_loss, avg_accuracy
 
     def _evaluate(self, params: Dict[str, Any], eval_loader: DataLoader) -> Dict[str, float]:
         total_loss = 0.0
@@ -175,40 +217,62 @@ class Trainer:
         start_time = time.time()
         
         try:
+            accumulated_batches = []
             while self.step < self.config.training.num_steps:
                 for tokens, targets in train_loader:
                     if self.step >= self.config.training.num_steps:
                         break
                     
-                    rng_key, step_key = jax.random.split(rng_key)
-                    params, opt_state, loss, accuracy = train_step_jit(params, opt_state, step_key, tokens, targets)
-                    self.step += 1
+                    accumulated_batches.append((tokens, targets))
                     
-                    metrics = {
-                        'loss': loss.item(),
-                        'accuracy': accuracy.item(),
-                        'learning_rate': 0.0001,  # TODO: Fix learning rate access
-                    }
-                    
-                    if self.step % self.config.training.log_frequency == 0:
-                        elapsed = time.time() - start_time
-                        steps_per_sec = self.step / elapsed
+                    # Process accumulated batches when we have enough
+                    if len(accumulated_batches) >= self.config.training.gradient_accumulation_steps:
+                        rng_key, step_key = jax.random.split(rng_key)
                         
-                        log_msg = f"Step {self.step:6d} | Loss: {metrics['loss']:.4f} | " \
-                                f"Acc: {metrics['accuracy']:.4f} | LR: {metrics['learning_rate']:.2e} | " \
-                                f"Steps/sec: {steps_per_sec:.2f}"
-                        logger.info(log_msg)
-                    
-                    if eval_loader and self.step % self.config.training.eval_frequency == 0:
-                        eval_metrics = self._evaluate(params, eval_loader)
-                        metrics.update(eval_metrics)
+                        if self.config.training.gradient_accumulation_steps == 1:
+                            # Standard training step for no accumulation
+                            params, opt_state, loss, accuracy = train_step_jit(params, opt_state, step_key, tokens, targets)
+                        else:
+                            # Gradient accumulation
+                            batch_tokens_list = [batch[0] for batch in accumulated_batches]
+                            batch_targets_list = [batch[1] for batch in accumulated_batches]
+                            
+                            grads, loss, accuracy = self._accumulate_gradients(
+                                params, step_key, batch_tokens_list, batch_targets_list
+                            )
+                            
+                            updates, opt_state = self.optimizer.update(grads, opt_state, params)
+                            params = optax.apply_updates(params, updates)
                         
-                        if eval_metrics['eval_loss'] < self.best_loss:
-                            self.best_loss = eval_metrics['eval_loss']
-                            logger.info(f"New best eval loss: {self.best_loss:.4f}")
-                    
-                    if self.step % self.config.training.save_frequency == 0:
-                        self.save_checkpoint(params, opt_state, metrics)
+                        self.step += 1
+                        accumulated_batches = []
+                        
+                        metrics = {
+                            'loss': loss.item(),
+                            'accuracy': accuracy.item(),
+                            'learning_rate': 0.0001,  # TODO: Fix learning rate access
+                        }
+                        
+                        if self.step % self.config.training.log_frequency == 0:
+                            elapsed = time.time() - start_time
+                            steps_per_sec = self.step / elapsed
+                            effective_batch_size = self.config.training.batch_size * self.config.training.gradient_accumulation_steps
+                            
+                            log_msg = f"Step {self.step:6d} | Loss: {metrics['loss']:.4f} | " \
+                                    f"Acc: {metrics['accuracy']:.4f} | LR: {metrics['learning_rate']:.2e} | " \
+                                    f"Steps/sec: {steps_per_sec:.2f} | Eff. BS: {effective_batch_size}"
+                            logger.info(log_msg)
+                        
+                        if eval_loader and self.step % self.config.training.eval_frequency == 0:
+                            eval_metrics = self._evaluate(params, eval_loader)
+                            metrics.update(eval_metrics)
+                            
+                            if eval_metrics['eval_loss'] < self.best_loss:
+                                self.best_loss = eval_metrics['eval_loss']
+                                logger.info(f"New best eval loss: {self.best_loss:.4f}")
+                        
+                        if self.step % self.config.training.save_frequency == 0:
+                            self.save_checkpoint(params, opt_state, metrics)
                         
         except KeyboardInterrupt:
             logger.info("Training interrupted by user")

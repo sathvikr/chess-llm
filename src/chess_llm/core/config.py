@@ -72,13 +72,16 @@ class TrainingConfig(BaseModel):
     learning_rate: float = Field(default=1e-4, gt=0.0, le=1.0)
     num_steps: int = Field(default=10000, ge=1)
     warmup_steps: int = Field(default=100, ge=0)
-    batch_size: int = Field(default=32, ge=1, le=1024)
+    batch_size: int = Field(default=32, ge=1, le=2048)
     gradient_clip_norm: float = Field(default=1.0, ge=0.0)
     weight_decay: float = Field(default=0.01, ge=0.0, le=1.0)
     save_frequency: int = Field(default=1000, ge=1)
     log_frequency: int = Field(default=100, ge=1)
     eval_frequency: int = Field(default=1000, ge=1)
     num_return_buckets: int = Field(default=128, ge=1)
+    distributed: bool = Field(default=False)
+    num_gpus: int = Field(default=1, ge=1, le=8)
+    gradient_accumulation_steps: int = Field(default=1, ge=1, le=64)
 
     @validator("warmup_steps")
     def warmup_less_than_total(cls, v: int, values: Dict[str, Any]) -> int:
