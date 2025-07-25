@@ -75,7 +75,9 @@ def prepare_data(
 @click.option("--num-steps", default=10000, type=int)
 @click.option("--experiment-name", default="default", type=str)
 @click.option("--no-eval", is_flag=True, help="Skip evaluation during training")
+@click.pass_context
 def train(
+    ctx: click.Context,
     config_path: Optional[Path],
     data_dir: Path,
     model_size: str,
@@ -114,17 +116,27 @@ def train(
             )
         
         console.print(f"[bold blue]Starting training experiment: {config.experiment_name}[/bold blue]")
+
+        # Prepare data before training
+        ctx.invoke(
+            prepare_data,
+            input_path=config.data.input_path,
+            output_dir=Path(config.data.output_dir),
+            train_ratio=config.data.train_ratio,
+            num_buckets=config.training.num_return_buckets,
+            seed=config.data.seed,
+        )
         
         train_loader = DataLoader(
-            data_path=data_dir / "train.npz",
+            data_path=Path(config.data.output_dir) / "train.npz",
             batch_size=config.training.batch_size,
             shuffle=True
         )
         
         eval_loader = None
-        if not no_eval and (data_dir / "test.npz").exists():
+        if not no_eval and (Path(config.data.output_dir) / "test.npz").exists():
             eval_loader = DataLoader(
-                data_path=data_dir / "test.npz",
+                data_path=Path(config.data.output_dir) / "test.npz",
                 batch_size=config.evaluation.batch_size,
                 shuffle=False
             )

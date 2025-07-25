@@ -12,3 +12,5 @@ rich>=13.0.0
 loguru>=0.7.0
 pyyaml>=6.0
 chess>=1.10.0
+dask[dataframe]>=2023.3.2
+fsspec>=2023.3.0
