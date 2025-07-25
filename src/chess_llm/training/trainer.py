@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -9,7 +9,7 @@ import orbax.checkpoint as ocp
 from loguru import logger
 
 from chess_llm.core.config import Config
-from chess_llm.core.exceptions import TrainingError, CheckpointError
+from chess_llm.core.exceptions import CheckpointError, TrainingError
 from chess_llm.data.loader import DataLoader
 from chess_llm.models.transformer import create_model, initialize_model, model_summary
 
@@ -87,13 +87,7 @@ class Trainer:
         logits = self.model.apply(new_params, None, tokens, is_training=False)
         accuracy = jnp.mean(jnp.argmax(logits, axis=-1) == targets)
         
-        metrics = {
-            'loss': float(loss),
-            'accuracy': float(accuracy),
-            'learning_rate': 0.0001,  # TODO: Fix learning rate access
-        }
-        
-        return new_params, new_opt_state, metrics
+        return new_params, new_opt_state, loss, accuracy
 
     def _evaluate(self, params: Dict[str, Any], eval_loader: DataLoader) -> Dict[str, float]:
         total_loss = 0.0
@@ -105,8 +99,8 @@ class Trainer:
             loss = optax.softmax_cross_entropy_with_integer_labels(logits, targets)
             accuracy = jnp.mean(jnp.argmax(logits, axis=-1) == targets)
             
-            total_loss += float(jnp.mean(loss))
-            total_accuracy += float(accuracy)
+            total_loss += jnp.mean(loss).item()
+            total_accuracy += accuracy.item()
             num_batches += 1
         
         if num_batches == 0:
@@ -187,8 +181,14 @@ class Trainer:
                         break
                     
                     rng_key, step_key = jax.random.split(rng_key)
-                    params, opt_state, metrics = train_step_jit(params, opt_state, step_key, tokens, targets)
+                    params, opt_state, loss, accuracy = train_step_jit(params, opt_state, step_key, tokens, targets)
                     self.step += 1
+                    
+                    metrics = {
+                        'loss': loss.item(),
+                        'accuracy': accuracy.item(),
+                        'learning_rate': 0.0001,  # TODO: Fix learning rate access
+                    }
                     
                     if self.step % self.config.training.log_frequency == 0:
                         elapsed = time.time() - start_time

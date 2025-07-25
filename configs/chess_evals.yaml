@@ -5,41 +5,41 @@ checkpoint_dir: "checkpoints"
 log_level: "INFO"
 
 data:
-  input_path: "data/chess_evals3.jsonl"
+  input_path: "data/chess_evals3_50M.jsonl"
   output_dir: "data"
-  batch_size: 1024
+  batch_size: 256
   shuffle: true
   train_ratio: 0.90
-  num_workers: 16
+  num_workers: 4
   seed: 42
 
 model:
-  size: "large"
+  size: "medium"
   vocab_size: 32
-  embedding_dim: 768
-  num_heads: 24
-  num_layers: 18
+  embedding_dim: 512
+  num_heads: 8
+  num_layers: 12
   max_sequence_length: 79
   dropout_rate: 0.1
   use_causal_mask: true
 
 training:
   policy: "state_value"
-  learning_rate: 0.0004
-  num_steps: 1000000
-  warmup_steps: 20000
-  batch_size: 512
+  learning_rate: 0.0003
+  num_steps: 50000
+  warmup_steps: 5000
+  batch_size: 64
   gradient_clip_norm: 1.0
   weight_decay: 0.01
-  save_frequency: 20000
-  log_frequency: 1000
-  eval_frequency: 20000
+  save_frequency: 5000
+  log_frequency: 100
+  eval_frequency: 5000
   num_return_buckets: 128
-  distributed: true
-  num_gpus: 8
-  gradient_accumulation_steps: 4
+  distributed: false
+  num_gpus: 1
+  gradient_accumulation_steps: 1
 
 evaluation:
-  batch_size: 1024
+  batch_size: 256
   num_samples: null
   metrics: ["accuracy", "loss"]
